@@ -10,7 +10,7 @@ After getting pissed by broadcom providing unfinished drivers and modules, I dec
 					src/shared - still not sure, but overall everyone uses some of the headers there.
 
 					src/include - as far as I am concerned, BCM4312 specifically uses this.
-				</li>
+				
 </li>
 
 
