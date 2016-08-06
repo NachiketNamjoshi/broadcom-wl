@@ -17,6 +17,8 @@
  * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  *
  * $Id: wl_cfg80211.c,v 1.1.6.4 2011-02-11 00:22:09 $
+ *
+ * Co-Author: Nachiket.Namjoshi <nachiketnamjoshi@gmail.com>
  */
 
 #if defined(USE_CFG80211)
@@ -1841,7 +1843,11 @@ wl_notify_connect_status(struct wl_cfg80211_priv *wl, struct net_device *ndev,
 			wl_get_assoc_ies(wl);
 			memcpy(&wl->bssid, &e->addr, ETHER_ADDR_LEN);
 			wl_update_bss_info(wl);
+		#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,15, 0)
+			cfg80211_ibss_joined(ndev, (u8 *)&wl->bssid, &wl->conf->channel, GFP_KERNEL);
+		#else
 			cfg80211_ibss_joined(ndev, (u8 *)&wl->bssid, GFP_KERNEL);
+		#endif
 			set_bit(WL_STATUS_CONNECTED, &wl->status);
 			wl->profile->active = true;
 		}
