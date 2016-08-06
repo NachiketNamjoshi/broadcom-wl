@@ -3433,10 +3433,11 @@ wl_proc_read(char *buffer, char **start, off_t offset, int length, int *eof, voi
 	static int wl_proc_read(struct seq_file *seq, void *offset) {
 		wl_info_t *wl = (wl_info_t *)seq->private;
 #endif
-#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 10, 0)	
+
 	int bcmerror, to_user;
 	int len;
-
+	
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 10, 0)	
 	if (offset > 0) {
 		*eof = 1;
 		return 0;
@@ -3519,7 +3520,6 @@ static const struct file_operations wl_fops = {
 	.llseek = seq_lseek,
 	.release = single_release,
 };
-#endif
 
 #else
 
@@ -3606,7 +3606,7 @@ wl_reg_proc_entry(wl_info_t *wl)
 #endif
  	return 0;
  }
- 
+
 #ifdef WLOFFLD
 uint32 wl_pcie_bar1(struct wl_info *wl, uchar** addr)
 {
