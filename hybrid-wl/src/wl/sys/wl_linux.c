@@ -17,6 +17,8 @@
  * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  *
  * $Id: wl_linux.c 397462 2013-04-18 22:02:26Z $
+ *
+ *	Co-Author: Nachiket.Namjoshi <nachiketnamjoshi@gmail.com>
  */
 
 #define LINUX_PORT
@@ -225,6 +227,7 @@ module_param(macaddr, charp, S_IRUGO);
 
 static int nompc = 0;
 module_param(nompc, int, 0);
+MODULE_LICENSE("Mixed/Proprietary");
 
 #ifdef quote_str
 #undef quote_str
