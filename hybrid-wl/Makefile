@@ -130,7 +130,7 @@ EXTRA_LDFLAGS      := $(src)/lib/wlc_hybrid.o_shipped
 
 KBASE              ?= /lib/modules/`uname -r`
 KBUILD_DIR         ?= $(KBASE)/build
-MDEST_DIR          ?= $(KBASE)/kernel/drivers/net/wireless
+MDEST_DIR          ?= $(KBASE)/extra/wl/
 
 all:
 	KBUILD_NOPEDANTIC=1 make -C $(KBUILD_DIR) M=`pwd`
@@ -139,4 +139,5 @@ clean:
 	KBUILD_NOPEDANTIC=1 make -C $(KBUILD_DIR) M=`pwd` clean
 
 install:
+	mkdir -p $(MDEST_DIR)
 	install -D -m 755 wl.ko $(MDEST_DIR)
