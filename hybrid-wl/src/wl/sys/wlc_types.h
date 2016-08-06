@@ -1,7 +1,7 @@
 /*
  * Forward declarations for commonly used wl driver structs
  *
- * Copyright (C) 2015, Broadcom Corporation. All Rights Reserved.
+ * Copyright (C) 2013, Broadcom Corporation. All Rights Reserved.
  * 
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -15,7 +15,7 @@
  * OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
  * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  *
- * Co-Author: Nachiket.Namjoshi <nachiketnamjoshi@gmail.com>
+ * $Id: wlc_types.h 402685 2013-05-16 17:47:20Z $
  */
 
 #ifndef _wlc_types_h_
@@ -50,13 +50,15 @@ typedef struct ratesel_info ratesel_info_t;
 typedef struct wlc_ap_info wlc_ap_info_t;
 typedef struct wlc_scan_info wlc_scan_info_t;
 typedef struct dpt_info dpt_info_t;
+#ifdef WLAWDL
+typedef struct awdl_info awdl_info_t;
+#endif
 typedef struct tdls_info tdls_info_t;
 typedef struct dls_info dls_info_t;
 typedef struct l2_filter_info l2_filter_info_t;
 typedef struct wlc_auth_info wlc_auth_info_t;
 typedef struct wlc_psta_info wlc_psta_info_t;
 typedef struct wlc_psa wlc_psa_t;
-typedef struct wowl_info wowl_info_t;
 typedef struct wlc_plt_info wlc_plt_pub_t;
 typedef struct supplicant supplicant_t;
 typedef struct authenticator authenticator_t;
@@ -81,7 +83,9 @@ typedef struct wlc_quiet_info wlc_quiet_info_t;
 typedef struct cca_info cca_info_t;
 typedef struct itfr_info itfr_info_t;
 
+#ifdef WLOFFLD
 typedef struct wlc_ol_info_t wlc_ol_info_t;
+#endif
 #ifdef WLOLPC
 typedef struct wlc_olpc_eng_info_t wlc_olpc_eng_info_t;
 #endif
@@ -109,6 +113,15 @@ typedef struct wlc_bssload_info wlc_bssload_info_t;
 typedef struct wlc_rfc wlc_rfc_t;
 typedef struct wlc_pktc_info wlc_pktc_info_t;
 
+#ifdef TRAFFIC_MGMT
+typedef struct wlc_trf_mgmt_ctxt    wlc_trf_mgmt_ctxt_t;
+typedef struct wlc_trf_mgmt_info    wlc_trf_mgmt_info_t;
+#endif
+
+#ifdef NET_DETECT
+typedef struct wlc_net_detect_ctxt  wlc_net_detect_ctxt_t;
+#endif
+
 typedef struct wlc_lpc_info wlc_lpc_info_t;
 typedef struct lpc_info lpc_info_t;
 typedef struct rate_lcb_info rate_lcb_info_t;
@@ -116,6 +129,17 @@ typedef struct rate_lcb_info rate_lcb_info_t;
 typedef struct wlc_txbf_info wlc_txbf_info_t;
 
 typedef struct wlc_bcn_clsg_info wlc_bcn_clsg_info_t;
+#ifdef WLRXOE
+typedef struct wlc_dngl_ol_info wlc_dngl_ol_info_t;
+typedef struct wlc_dngl_ol_bcn_info wlc_dngl_ol_bcn_info_t;
+typedef struct wlc_dngl_ol_pkt_filter_info wlc_dngl_ol_pkt_filter_info_t;
+typedef struct wlc_dngl_ol_wowl_info wlc_dngl_ol_wowl_info_t;
+typedef struct wlc_dngl_ol_l2keepalive_info wlc_dngl_ol_l2keepalive_info_t;
+typedef struct wlc_dngl_ol_gtk_info wlc_dngl_ol_gtk_info_t;
+typedef struct wlc_dngl_ol_mdns_info wlc_dngl_ol_mdns_info_t;
+typedef struct wlc_dngl_ol_rssi_info wlc_dngl_ol_rssi_info_t;
+typedef struct wlc_dngl_ol_eventlog_info wlc_dngl_ol_eventlog_info_t;
+#endif
 
 typedef struct wlc_nar_info wlc_nar_info_t;
 
