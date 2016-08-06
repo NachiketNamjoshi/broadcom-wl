@@ -3242,8 +3242,13 @@ wl_tkip_keyset(wl_info_t *wl, wsec_key_t *key)
 void
 wl_tkip_printstats(wl_info_t *wl, bool group_key)
 {
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 14) && LINUX_VERSION_CODE < KERNEL_VERSION(3, 10, 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 14)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 10, 0)
+	struct seq_file sfile;
+	struct seq_file *debug_buf = &sfile;
+#else
 	char debug_buf[512];
+#endif	
 	int idx;
 	if (wl->tkipmodops) {
 		if (group_key) {
@@ -3256,7 +3261,11 @@ wl_tkip_printstats(wl_info_t *wl, bool group_key)
 			wl->tkipmodops->print_stats(debug_buf, wl->tkip_ucast_data);
 		else
 			return;
+	#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 10, 0)
+		printk("%s: TKIP stats from module: %s\n", debug_buf->buf, group_key?"Bcast":"Ucast");
+	#else
 		printk("%s: TKIP stats from module: %s\n", debug_buf, group_key?"Bcast":"Ucast");
+	#endif
 	}
 #endif 
 }
@@ -3420,6 +3429,11 @@ static int
 wl_proc_read(char *buffer, char **start, off_t offset, int length, int *eof, void *data)
 {
 	wl_info_t * wl = (wl_info_t *)data;
+#else
+	static int wl_proc_read(struct seq_file *seq, void *offset) {
+		wl_info_t *wl = (wl_info_t *)seq->private;
+#endif
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 10, 0)	
 	int bcmerror, to_user;
 	int len;
 
@@ -3432,17 +3446,32 @@ wl_proc_read(char *buffer, char **start, off_t offset, int length, int *eof, voi
 		WL_ERROR(("%s: Not enough return buf space\n", __FUNCTION__));
 		return 0;
 	}
+#endif
 	WL_LOCK(wl);
 	bcmerror = wlc_ioctl(wl->wlc, WLC_GET_MONITOR, &to_user, sizeof(int), NULL);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 10, 0)
 	len = sprintf(buffer, "%d\n", to_user);
+#endif
 	WL_UNLOCK(wl);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 10, 0)
 	return len;
+#else
+	seq_printf(seq, "%d\n", to_user);
+	return bcmerror;
+#endif
 }
-
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 10, 0)
 static int
 wl_proc_write(struct file *filp, const char *buff, unsigned long length, void *data)
 {
 	wl_info_t * wl = (wl_info_t *)data;
+#else
+	static ssize_t 
+wl_proc_write(struct file *filp, const char __user *buff, size_t length, loff_t *ppos)
+{
+	struct seq_file *seq = filp->private_data;
+	wl_info_t * wl = (wl_info_t *)seq->private;
+#endif
 	int from_user = 0;
 	int bcmerror;
 
@@ -3453,7 +3482,11 @@ wl_proc_write(struct file *filp, const char *buff, unsigned long length, void *d
 	}
 	if (copy_from_user(&from_user, buff, 1)) {
 		WL_ERROR(("%s: copy from user failed\n", __FUNCTION__));
+	#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 10, 0)
 		return -EIO;
+	#else
+		return -EFAULT;
+	#endif
 	}
 
 	if (from_user >= 0x30)
@@ -3467,8 +3500,26 @@ wl_proc_write(struct file *filp, const char *buff, unsigned long length, void *d
 		WL_ERROR(("%s: SET_MONITOR failed with %d\n", __FUNCTION__, bcmerror));
 		return -EIO;
 	}
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 10, 0)
+	*ppos += length;
+#endif
 	return length;
 }
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 10, 0)
+static int wl_proc_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, wl_proc_read, PDE_DATA(inode));
+}
+
+static const struct file_operations wl_fops = {
+	.owner = THIS_MODULE,
+	.open = wl_proc_open,
+	.read = seq_read,
+	.write = wl_proc_write,
+	.llseek = seq_lseek,
+	.release = single_release,
+};
+#endif
 
 #else
 
@@ -3536,26 +3587,26 @@ static const struct file_operations wl_proc_fops = {
 static int
 wl_reg_proc_entry(wl_info_t *wl)
 {
-	char tmp[32];
-	sprintf(tmp, "%s%d", HYBRID_PROC, wl->pub->unit);
-
+		char tmp[32];
+ 	sprintf(tmp, "%s%d", HYBRID_PROC, wl->pub->unit);
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3, 10, 0)
-	wl->proc_entry = create_proc_entry(tmp, 0644, NULL);
-	if (wl->proc_entry) {
-		wl->proc_entry->read_proc = wl_proc_read;
-		wl->proc_entry->write_proc = wl_proc_write;
-		wl->proc_entry->data = wl;
-	} 
+ 	if ((wl->proc_entry = create_proc_entry(tmp, 0644, NULL)) == NULL) {
+ 		WL_ERROR(("%s: create_proc_entry %s failed\n", __FUNCTION__, tmp));
 #else
-	wl->proc_entry = proc_create_data(tmp, 0644, NULL, &wl_proc_fops, wl);
+	if ((wl->proc_entry = proc_create_data(tmp, 0644, NULL, &wl_fops, wl)) == NULL) {
+		WL_ERROR(("%s: proc_create_data %s failed\n", __FUNCTION__, tmp));
 #endif
-	if (!wl->proc_entry) {
-		WL_ERROR(("%s: create_proc_entry %s failed\n", __FUNCTION__, tmp));
-		ASSERT(0);
-		return -1;
-	}
-	return 0;
-}
+ 		ASSERT(0);
+ 		return -1;
+ 	}
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 10, 0)
+ 	wl->proc_entry->read_proc = wl_proc_read;
+ 	wl->proc_entry->write_proc = wl_proc_write;
+ 	wl->proc_entry->data = wl;
+#endif
+ 	return 0;
+ }
+ 
 #ifdef WLOFFLD
 uint32 wl_pcie_bar1(struct wl_info *wl, uchar** addr)
 {
