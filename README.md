@@ -23,14 +23,12 @@ After getting pissed by broadcom providing unfinished drivers and modules, I dec
     ```
     Use only 802.11b for better results for now, idk why but "b" is not dropping connections, I had a solid 12 hours of continuous idle connection and it didn't drop. 
     ```
- 8. 7/8/16 : Update All Sources from `6.30.223.141` to `6.30.223.271`
-   * Updated each and every file with changes that were done previously.
-   * Adapted new naming from `wl` to `reacted_wl`
-   * Updated `README.md`
+8. 7/8/16 : Update All Sources from `6.30.223.141` to `6.30.223.271`
+  * Updated each and every file with changes that were done previously.
+  * Adapted new naming from `wl` to `reacted_wl`
+  * Updated `README.md`
  
-###### As of now, Current Sources and my sources are parallel and work properly.
-###### 802.11 b/g/n all of them working properly. I personally use 802.11g
-###### And I do not face any problems (mostly).
+###### As of now, Current Sources and my sources are parallel and work properly. 802.11 b/g/n all of them working properly. I personally use 802.11g and I do not face any problems (mostly).
 
 # Installation
 
