@@ -2,7 +2,7 @@
  * Linux-specific portion of Broadcom 802.11abg Networking Device Driver
  * cfg80211 interface
  *
- * Copyright (C) 2013, Broadcom Corporation. All Rights Reserved.
+ * Copyright (C) 2015, Broadcom Corporation. All Rights Reserved.
  * 
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -17,8 +17,6 @@
  * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  *
  * $Id: wl_cfg80211.c,v 1.1.6.4 2011-02-11 00:22:09 $
- *
- * Co-Author: Nachiket.Namjoshi <nachiketnamjoshi@gmail.com>
  */
 
 #if defined(USE_CFG80211)
@@ -45,7 +43,11 @@
 #define EVENT_FLAGS(e) dtoh16((e)->flags)
 #define EVENT_STATUS(e) dtoh32((e)->status)
 
+#ifdef BCMDBG
 u32 wl_dbg_level = WL_DBG_ERR | WL_DBG_INFO;
+#else
+u32 wl_dbg_level = WL_DBG_ERR;
+#endif
 
 static s32 wl_cfg80211_change_iface(struct wiphy *wiphy, struct net_device *ndev,
            enum nl80211_iftype type, u32 *flags, struct vif_params *params);
@@ -61,8 +63,15 @@ static s32 wl_cfg80211_set_wiphy_params(struct wiphy *wiphy, u32 changed);
 static s32 wl_cfg80211_join_ibss(struct wiphy *wiphy, struct net_device *dev,
            struct cfg80211_ibss_params *params);
 static s32 wl_cfg80211_leave_ibss(struct wiphy *wiphy, struct net_device *dev);
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 16, 0)
 static s32 wl_cfg80211_get_station(struct wiphy *wiphy,
            struct net_device *dev, u8 *mac, struct station_info *sinfo);
+#else
+static s32 wl_cfg80211_get_station(struct wiphy *wiphy,
+           struct net_device *dev, const u8 *mac, struct station_info *sinfo);
+#endif
+
 static s32 wl_cfg80211_set_power_mgmt(struct wiphy *wiphy,
            struct net_device *dev, bool enabled, s32 timeout);
 static int wl_cfg80211_connect(struct wiphy *wiphy, struct net_device *dev,
@@ -1273,6 +1282,9 @@ wl_cfg80211_add_key(struct wiphy *wiphy, struct net_device *dev,
 	}
 
 	key_endian_to_device(&key);
+	if (wl->passive) {
+		schedule();
+	}
 	err = wl_dev_ioctl(dev, WLC_SET_KEY, &key, sizeof(key));
 	if (err) {
 		WL_ERR(("WLC_SET_KEY error (%d)\n", err));
@@ -1382,7 +1394,7 @@ wl_cfg80211_get_key(struct wiphy *wiphy, struct net_device *dev,
 	key_endian_to_host(&key);
 
 	params.key_len = (u8) min_t(u8, DOT11_MAX_KEY_SIZE, key.len);
-	memcpy(params.key, key.data, params.key_len);
+	memcpy((char *)params.key, key.data, params.key_len);
 
 	if ((err = wl_dev_ioctl(dev, WLC_GET_WSEC, &wsec, sizeof(wsec)))) {
 		return err;
@@ -1416,9 +1428,15 @@ wl_cfg80211_get_key(struct wiphy *wiphy, struct net_device *dev,
 	return err;
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 16, 0)
 static s32
 wl_cfg80211_get_station(struct wiphy *wiphy, struct net_device *dev,
                         u8 *mac, struct station_info *sinfo)
+#else
+static s32
+wl_cfg80211_get_station(struct wiphy *wiphy, struct net_device *dev,
+                        const u8 *mac, struct station_info *sinfo)
+#endif
 {
 	struct wl_cfg80211_priv *wl = wiphy_to_wl(wiphy);
 	scb_val_t scb_val;
@@ -1427,7 +1445,7 @@ wl_cfg80211_get_station(struct wiphy *wiphy, struct net_device *dev,
 	s32 err = 0;
 
 	if (memcmp(mac, wl->profile->bssid, ETHER_ADDR_LEN)) {
-		WL_ERR(("Wrong Mac address\n"));
+		WL_ERR(("Wrong Mac address, mac = %pM   profile =%pM\n", mac, wl->profile->bssid));
 		return -ENOENT;
 	}
 
@@ -1436,7 +1454,11 @@ wl_cfg80211_get_station(struct wiphy *wiphy, struct net_device *dev,
 		WL_DBG(("Could not get rate (%d)\n", err));
 	} else {
 		rate = dtoh32(rate);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 0, 0)
+		sinfo->filled |= BIT(NL80211_STA_INFO_TX_BITRATE);
+#else
 		sinfo->filled |= STATION_INFO_TX_BITRATE;
+#endif
 		sinfo->txrate.legacy = rate * 5;
 		WL_DBG(("Rate %d Mbps\n", (rate / 2)));
 	}
@@ -1449,7 +1471,11 @@ wl_cfg80211_get_station(struct wiphy *wiphy, struct net_device *dev,
 			return err;
 		}
 		rssi = dtoh32(scb_val.val);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 0, 0)
+		sinfo->filled |= BIT(NL80211_STA_INFO_SIGNAL);
+#else
 		sinfo->filled |= STATION_INFO_SIGNAL;
+#endif
 		sinfo->signal = rssi;
 		WL_DBG(("RSSI %d dBm\n", rssi));
 	}
@@ -1586,6 +1612,184 @@ wl_cfg80211_flush_pmksa(struct wiphy *wiphy, struct net_device *dev)
 
 #endif  
 
+#ifdef CONFIG_PM
+#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 39)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 9, 0)
+
+static int
+wl_wowl_ind_wake_reason(struct wl_cfg80211_priv *wl, struct cfg80211_wowlan_wakeup *wakeup)
+{
+	wl_wowl_wakeind_t wowl_ind;
+	s32 err;
+
+	err = wl_dev_bufvar_get(wl_to_ndev(wl), "wowl_wakeind",
+		(s8 *)&wowl_ind, sizeof(wowl_ind));
+	if (err != 0) {
+		WL_ERR(("Unable to get wake reason, err = %d\n", err));
+		return -1;
+	}
+
+	if (wowl_ind.ucode_wakeind == 0) {
+		WL_DBG(("System woke, but not by us\n"));
+		return 0;
+	}
+	WL_DBG(("wake reason is 0x%x\n", wowl_ind.ucode_wakeind));
+
+	if (wowl_ind.ucode_wakeind & WL_WOWL_MAGIC) {
+		WL_ERR(("WOWLAN Woke for: Magic Pkt\n"));
+		wakeup->magic_pkt = true;
+	}
+	if (wowl_ind.ucode_wakeind & WL_WOWL_DIS) {
+		WL_ERR(("WOWLAN Woke for: Disconnect\n"));
+		wakeup->disconnect = true;
+	}
+	if (wowl_ind.ucode_wakeind & WL_WOWL_BCN) {
+		WL_ERR(("WOWLAN Woke for: Beacon Loss\n"));
+		wakeup->disconnect = true;
+	}
+	if (wowl_ind.ucode_wakeind & WL_WOWL_GTK_FAILURE) {
+		WL_ERR(("WOWLAN Woke for: GTK failure\n"));
+		wakeup->gtk_rekey_failure = true;
+	}
+	if (wowl_ind.ucode_wakeind & WL_WOWL_EAPID) {
+		WL_ERR(("WOWLAN Woke for: EAP identify request\n"));
+		wakeup->eap_identity_req = true;
+	}
+	if (wowl_ind.ucode_wakeind & WL_WOWL_M1) {
+		WL_ERR(("WOWLAN Woke for: 4-way handshake request\n"));
+		wakeup->four_way_handshake = true;
+	}
+	return 1;
+}
+#endif 
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 1, 0)
+static int
+wl_cfg80211_rekey(struct wiphy *wiphy, struct net_device *ndev,
+        struct cfg80211_gtk_rekey_data *data)
+{
+	struct wl_cfg80211_priv *wl = wiphy_to_wl(wiphy);
+	wlc_rekey_info_t rekey;
+	s32 err;
+
+	if (!wl->offloads) {
+		return 0;
+	}
+
+	memset(&rekey, 0, sizeof(rekey));
+	memcpy(&rekey.kek, data->kek, WLC_KEK_LEN);
+	memcpy(&rekey.kck, data->kck, WLC_KCK_LEN);
+	memcpy(&rekey.replay_counter, data->replay_ctr, WLC_REPLAY_CTR_LEN);
+	WL_INF(("Send down replay counter %x%x%x%x%x%x%x%x\n",
+		rekey.replay_counter[0], rekey.replay_counter[1], rekey.replay_counter[2],
+		rekey.replay_counter[3], rekey.replay_counter[4], rekey.replay_counter[5],
+		rekey.replay_counter[6], rekey.replay_counter[7]));
+
+	err = wl_dev_bufvar_set(wl_to_ndev(wl), "wowl_replay", (s8 *)&rekey, sizeof(rekey));
+	if (err) {
+		WL_ERR(("Error calling wowl_set_key\n"));
+		return err;
+	}
+	return err;
+}
+#endif 
+
+static int wl_cfg80211_suspend(struct wiphy *wiphy, struct cfg80211_wowlan *wowlan)
+{
+	struct wl_cfg80211_priv *wl = wiphy_to_wl(wiphy);
+	uint wowl = 0;
+	s32 err;
+
+	if (!wowlan) {
+		WL_DBG(("No wowlan requested\n"));
+		return 0;
+	}
+	if (!test_bit(WL_STATUS_CONNECTED, &wl->status)) {
+		WL_INF(("No wowl when not associated.\n"));
+		return 0;
+	}
+
+	err = wl_dev_intvar_get(wl_to_ndev(wl), "wowl", &wowl);
+	if (err) {
+		WL_ERR(("Error fetching WOWL %d\n", err));
+	}
+	if (wowlan->disconnect) {
+		WL_INF(("Requesting wake on Disconnect\n"));
+		wowl |= WL_WOWL_DIS | WL_WOWL_BCN;
+	}
+	if (wowlan->magic_pkt) {
+		WL_INF(("Requesting wake on Magic Pkt\n"));
+		wowl |= WL_WOWL_MAGIC;
+	}
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 1, 0)
+	if (wowlan->gtk_rekey_failure) {
+		WL_INF(("Requesting wake GTK rekey failure Pkt\n"));
+		wowl |= WL_WOWL_GTK_FAILURE;
+	}
+	if (wowlan->four_way_handshake) {
+		WL_INF(("Requesting wake on 4way handshake request\n"));
+		wowl |= WL_WOWL_M1;
+	}
+#endif 
+
+	wowl |= WL_WOWL_KEYROT;
+
+	err = wl_dev_intvar_set(wl_to_ndev(wl), "wowl", wowl);
+	if (err) {
+		WL_ERR(("Error enabling WOWL %d\n", err));
+	}
+
+	return err;
+}
+#else 
+static int wl_cfg80211_suspend(struct wiphy *wiphy)
+{
+	return 0;
+}
+#endif 
+
+static int wl_cfg80211_resume(struct wiphy *wiphy)
+{
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 1, 0)
+	struct wl_cfg80211_priv *wl = wiphy_to_wl(wiphy);
+	wlc_rekey_info_t *rekey = (wlc_rekey_info_t *)wl->extra_buf;
+	s32 err;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 9, 0)
+	struct cfg80211_wowlan_wakeup wakeup;
+	int result;
+
+	memset(&wakeup, 0, sizeof(wakeup));
+	wakeup.pattern_idx = -1;
+
+	result = wl_wowl_ind_wake_reason(wl, &wakeup);
+	switch (result) {
+		case -1: 
+			break;
+		case 0:	
+			cfg80211_report_wowlan_wakeup(wl_to_wdev(wl), NULL, GFP_KERNEL);
+			break;
+		case 1: 
+			cfg80211_report_wowlan_wakeup(wl_to_wdev(wl), &wakeup, GFP_KERNEL);
+			break;
+	}
+#endif 
+
+	err = wl_dev_bufvar_get(wl_to_ndev(wl), "wowl_replay", (s8 *)rekey,
+		sizeof(wlc_rekey_info_t));
+	if (!err) {
+		WL_INF(("Send up replay counter %x%x%x%x%x%x%x%x\n",
+			rekey->replay_counter[0], rekey->replay_counter[1],
+			rekey->replay_counter[2], rekey->replay_counter[3],
+			rekey->replay_counter[4], rekey->replay_counter[5],
+			rekey->replay_counter[6], rekey->replay_counter[7]));
+		cfg80211_gtk_rekey_notify(wl_to_ndev(wl), (u8 *)&wl->bssid.octet,
+			rekey->replay_counter, GFP_KERNEL);
+	}
+#endif 
+	return 0;
+}
+#endif 
+
 static struct cfg80211_ops wl_cfg80211_ops = {
 	.change_virtual_intf = wl_cfg80211_change_iface,
 	.scan = wl_cfg80211_scan,
@@ -1602,12 +1806,36 @@ static struct cfg80211_ops wl_cfg80211_ops = {
 	.set_power_mgmt = wl_cfg80211_set_power_mgmt,
 	.connect = wl_cfg80211_connect,
 	.disconnect = wl_cfg80211_disconnect,
+#ifdef CONFIG_PM
+	.suspend = wl_cfg80211_suspend,
+	.resume = wl_cfg80211_resume,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 1, 0)
+	.set_rekey_data = wl_cfg80211_rekey,
+#endif 
+#endif 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 33)
 	.set_pmksa = wl_cfg80211_set_pmksa,
 	.del_pmksa = wl_cfg80211_del_pmksa,
 	.flush_pmksa = wl_cfg80211_flush_pmksa
 #endif
 };
+
+#ifdef CONFIG_PM
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 39)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)
+static const struct wiphy_wowlan_support wl_wowlan_support = {
+#else
+static struct wiphy_wowlan_support wl_wowlan_support = {
+#endif 
+	.flags = WIPHY_WOWLAN_MAGIC_PKT
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 1, 0)
+	| WIPHY_WOWLAN_SUPPORTS_GTK_REKEY | WIPHY_WOWLAN_GTK_REKEY_FAILURE |
+	WIPHY_WOWLAN_EAP_IDENTITY_REQ
+#endif
+	| WIPHY_WOWLAN_DISCONNECT,
+};
+#endif 
+#endif 
 
 static s32 wl_mode_to_nl80211_iftype(s32 mode)
 {
@@ -1657,6 +1885,17 @@ static s32 wl_alloc_wdev(struct device *dev, struct wireless_dev **rwdev)
 
 	wdev->wiphy->flags &= ~WIPHY_FLAG_PS_ON_BY_DEFAULT;
 #endif
+
+#ifdef CONFIG_PM
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 39)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)
+	wdev->wiphy->wowlan = &wl_wowlan_support;
+#else
+	wdev->wiphy->wowlan = wl_wowlan_support;
+#endif 
+#endif 
+#endif 
+
 	err = wiphy_register(wdev->wiphy);
 	if (err < 0) {
 		WL_ERR(("Couldn not register wiphy device (%d)\n", err));
@@ -1765,7 +2004,17 @@ static s32 wl_inform_single_bss(struct wl_cfg80211_priv *wl, struct wl_bss_info 
 #else
 	freq = ieee80211_channel_to_frequency(notif_bss_info->channel);
 #endif
+	if (freq == 0) {
+		WL_ERR(("Invalid channel, fail to chcnage channel to freq\n"));
+		kfree(notif_bss_info);
+		return -EINVAL;
+	}
 	channel = ieee80211_get_channel(wiphy, freq);
+	if (unlikely(!channel)) {
+		WL_ERR(("ieee80211_get_channel error\n"));
+		kfree(notif_bss_info);
+		return -EINVAL;
+	}
 
 	WL_DBG(("SSID : \"%s\", rssi %d, channel %d, capability : 0x04%x, bssid %pM\n",
 		bi->SSID, notif_bss_info->rssi, notif_bss_info->channel,
@@ -1782,9 +2031,15 @@ static s32 wl_inform_single_bss(struct wl_cfg80211_priv *wl, struct wl_bss_info 
 
 	notify_ie = (u8 *)bi + le16_to_cpu(bi->ie_offset);
 	notify_ielen = le32_to_cpu(bi->ie_length);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 18, 0)
 	cbss = cfg80211_inform_bss(wiphy, channel, (const u8 *)(bi->BSSID.octet),
 		0, beacon_proberesp->capab_info, beacon_proberesp->beacon_int,
 		(const u8 *)notify_ie, notify_ielen, signal, GFP_KERNEL);
+#else
+	cbss = cfg80211_inform_bss(wiphy, channel, CFG80211_BSS_FTYPE_UNKNOWN, (const u8 *)(bi->BSSID.octet),
+		0, beacon_proberesp->capab_info, beacon_proberesp->beacon_int,
+		(const u8 *)notify_ie, notify_ielen, signal, GFP_KERNEL);
+#endif
 
 	if (unlikely(!cbss))
 		return -ENOMEM;
@@ -1808,6 +2063,12 @@ wl_notify_connect_status(struct wl_cfg80211_priv *wl, struct net_device *ndev,
 	u32 event = EVENT_TYPE(e);
 	u16 flags = EVENT_FLAGS(e);
 	u32 status = EVENT_STATUS(e);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 15, 0)
+	struct ieee80211_channel *channel = NULL;
+	struct wiphy *wiphy;
+	u32 chanspec, chan;
+	u32 freq, band;
+#endif 
 
 	WL_DBG(("\n"));
 
@@ -1819,7 +2080,11 @@ wl_notify_connect_status(struct wl_cfg80211_priv *wl, struct net_device *ndev,
 		}
 		else if ((event == WLC_E_LINK && ~(flags & WLC_EVENT_MSG_LINK)) ||
 			event == WLC_E_DEAUTH_IND || event == WLC_E_DISASSOC_IND) {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,2,0)
 			cfg80211_disconnected(ndev, 0, NULL, 0, GFP_KERNEL);
+#else
+			cfg80211_disconnected(ndev, 0, NULL, 0, false, GFP_KERNEL);
+#endif
 			clear_bit(WL_STATUS_CONNECTED, &wl->status);
 			wl_link_down(wl);
 			wl_init_prof(wl->profile);
@@ -1843,11 +2108,21 @@ wl_notify_connect_status(struct wl_cfg80211_priv *wl, struct net_device *ndev,
 			wl_get_assoc_ies(wl);
 			memcpy(&wl->bssid, &e->addr, ETHER_ADDR_LEN);
 			wl_update_bss_info(wl);
-		#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,15, 0)
-			cfg80211_ibss_joined(ndev, (u8 *)&wl->bssid, &wl->conf->channel, GFP_KERNEL);
-		#else
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 15, 0)
+			wiphy = wl_to_wiphy(wl);
+			err = wl_dev_intvar_get(ndev, "chanspec", &chanspec);
+			if (err) {
+				WL_ERR(("Could not get chanspec, err %d\n", err));
+				return err;
+			}
+			chan = wf_chspec_ctlchan(chanspec);
+			band = (chan <= CH_MAX_2G_CHANNEL) ? IEEE80211_BAND_2GHZ : IEEE80211_BAND_5GHZ;
+			freq = ieee80211_channel_to_frequency(chan, band);
+			channel = ieee80211_get_channel(wiphy, freq);
+			cfg80211_ibss_joined(ndev, (u8 *)&wl->bssid, channel, GFP_KERNEL);
+#else
 			cfg80211_ibss_joined(ndev, (u8 *)&wl->bssid, GFP_KERNEL);
-		#endif
+#endif
 			set_bit(WL_STATUS_CONNECTED, &wl->status);
 			wl->profile->active = true;
 		}
@@ -1908,7 +2183,7 @@ wl_dev_bufvar_get(struct net_device *dev, s8 *name, s8 *buf, s32 buf_len)
 	BUG_ON(!len);
 	err = wl_dev_ioctl(dev, WLC_GET_VAR, (void *)wl->ioctl_buf, WL_IOCTL_LEN_MAX);
 	if (err) {
-		WL_ERR(("error (%d)\n", err));
+		WL_INF(("error (%d)\n", err));
 		return err;
 	}
 	memcpy(buf, wl->ioctl_buf, buf_len);
@@ -2052,6 +2327,7 @@ static s32 wl_update_bss_info(struct wl_cfg80211_priv *wl)
 		ie = bss->information_elements;
 		ie_len = bss->len_information_elements;
 #endif
+		wl->conf->channel = *bss->channel;
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 9, 0)
 		cfg80211_put_bss(wiphy, bss);
 #else
@@ -2085,11 +2361,12 @@ wl_bss_roaming_done(struct wl_cfg80211_priv *wl, struct net_device *ndev,
 	s32 err = 0;
 
 	wl_get_assoc_ies(wl);
+	memcpy(wl->profile->bssid, &e->addr, ETHER_ADDR_LEN);
 	memcpy(&wl->bssid, &e->addr, ETHER_ADDR_LEN);
 	wl_update_bss_info(wl);
 	cfg80211_roamed(ndev,
 #if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 39)
-			NULL,	 
+			&wl->conf->channel,	 
 #endif
 			(u8 *)&wl->bssid,
 			conn_info->req_ie, conn_info->req_ie_len,
@@ -2108,27 +2385,28 @@ wl_bss_connect_done(struct wl_cfg80211_priv *wl, struct net_device *ndev,
 	struct wl_cfg80211_connect_info *conn_info = wl_to_conn(wl);
 	s32 err = 0;
 
-	wl_get_assoc_ies(wl);
-	memcpy(&wl->bssid, &e->addr, ETHER_ADDR_LEN);
-	wl_update_bss_info(wl);
+	if (wl->scan_request) {
+		WL_DBG(("%s: Aborting scan\n", __FUNCTION__));
+		cfg80211_scan_done(wl->scan_request, true);     
+		wl->scan_request = NULL;
+	}
 
-	WL_DBG(("Reporting BSS network join result \"%s\"\n", wl->profile->ssid.SSID));
 	if (test_and_clear_bit(WL_STATUS_CONNECTING, &wl->status)) {
+		if (completed) {
+			wl_get_assoc_ies(wl);
+			memcpy(&wl->bssid, &e->addr, ETHER_ADDR_LEN);
+			memcpy(wl->profile->bssid, &e->addr, ETHER_ADDR_LEN);
+			wl_update_bss_info(wl);
+			set_bit(WL_STATUS_CONNECTED, &wl->status);
+		}
+
+		WL_DBG(("Reporting BSS network join result \"%s\"\n",
+			wl->profile->ssid.SSID));
 		cfg80211_connect_result(ndev, (u8 *)&wl->bssid,	conn_info->req_ie,
 		    conn_info->req_ie_len, conn_info->resp_ie, conn_info->resp_ie_len,
 		    completed ? WLAN_STATUS_SUCCESS : WLAN_STATUS_AUTH_TIMEOUT,	GFP_KERNEL);
-		WL_DBG(("connection %s\n", completed ? "succeeded" : "failed"));
+		WL_DBG(("Connection %s\n", completed ? "Succeeded" : "FAILed"));
 	}
-	else {
-		cfg80211_roamed(ndev,
-#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 39)
-			NULL, 
-#endif
-		     (u8 *)&wl->bssid,	conn_info->req_ie, conn_info->req_ie_len,
-		     conn_info->resp_ie, conn_info->resp_ie_len,	GFP_KERNEL);
-		WL_DBG(("roaming result\n"));
-	}
-	set_bit(WL_STATUS_CONNECTED, &wl->status);
 
 	return err;
 }
@@ -2362,7 +2640,7 @@ static void wl_deinit_cfg80211_priv(struct wl_cfg80211_priv *wl)
 	wl_deinit_priv_mem(wl);
 }
 
-s32 wl_cfg80211_attach(struct net_device *ndev, struct device *dev)
+s32 wl_cfg80211_attach(struct net_device *ndev, struct device *dev, int passive)
 {
 	struct wireless_dev *wdev;
 	struct wl_cfg80211_priv *wl;
@@ -2388,6 +2666,7 @@ s32 wl_cfg80211_attach(struct net_device *ndev, struct device *dev)
 		WL_ERR(("Failed to init iwm_priv (%d)\n", err));
 		goto cfg80211_attach_out;
 	}
+	wl->passive = !!passive;
 
 	if (!err) {
 		WL_INF(("Registered CFG80211 phy\n"));
@@ -2401,7 +2680,13 @@ cfg80211_attach_out:
 
 void wl_cfg80211_detach(struct net_device *ndev)
 {
-	struct wl_cfg80211_priv *wl = ndev_to_wl(ndev);
+	struct wl_cfg80211_priv *wl;
+
+	if (ndev->ieee80211_ptr == NULL) {
+                WL_ERR(( "NULL ndev->ieee80211ptr, unable to deref wl\n"));
+                return;
+        }
+	wl = ndev_to_wl(ndev);
 
 	wl_deinit_cfg80211_priv(wl);
 	wl_free_wdev(wl);
@@ -2426,8 +2711,8 @@ static s32 wl_event_handler(void *data)
 			WL_ERR(("eqeue empty..\n"));
 			BUG();
 		}
-		WL_DBG(("event type (%d)\n", e->etype));
 		if (wl->el.handler[e->etype]) {
+			WL_DBG(("event type (%d)\n", e->etype));
 			wl->el.handler[e->etype] (wl, wl_to_ndev(wl), &e->emsg, e->edata);
 		} else {
 			WL_DBG(("Unknown Event (%d): ignoring\n", e->etype));
@@ -2556,6 +2841,32 @@ static s32 wl_set_mode(struct net_device *ndev, s32 iftype)
 	return 0;
 }
 
+static void wl_update_wowl(struct net_device *ndev)
+{
+#ifdef CONFIG_PM
+	struct wl_cfg80211_priv *wl = ndev_to_wl(ndev);
+	struct wireless_dev *wdev = ndev->ieee80211_ptr;
+	s32 offloads = 0;
+	s32 err = 0;
+	err = wl_dev_bufvar_get(wl_to_ndev(wl), "offloads",
+		(s8 *)&offloads, sizeof(offloads));
+	if (err == 0 && offloads == 1) {
+		WL_INF(("Supports offloads\n"));
+		wl->offloads = true;
+	} else {
+		WL_INF(("No offloads supported\n"));
+		wl->offloads = false;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 39)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)
+		wdev->wiphy->wowlan = NULL;
+#else
+		memset(&wdev->wiphy->wowlan, 0, sizeof(struct wiphy_wowlan_support));
+#endif 
+#endif 
+	}
+#endif 
+}
+
 static s32 wl_update_wiphybands(struct wl_cfg80211_priv *wl)
 {
 	struct wiphy *wiphy;
@@ -2572,7 +2883,7 @@ static s32 wl_update_wiphybands(struct wl_cfg80211_priv *wl)
 	phy = ((char *)&phy_list)[0];
 	WL_DBG(("%c phy\n", phy));
 
-	if (phy == 'n' || phy == 'a') {
+	if (phy == 'n' || phy == 'a' || phy == 'v') {
 		wiphy = wl_to_wiphy(wl);
 		wiphy->bands[IEEE80211_BAND_5GHZ] = &__wl_band_5ghz_n;
 	}
@@ -2587,10 +2898,13 @@ s32 wl_cfg80211_up(struct net_device *ndev)
 	struct wireless_dev *wdev = ndev->ieee80211_ptr;
 
 	wl_set_mode(ndev, wdev->iftype);
-
 	err = wl_update_wiphybands(wl);
+	if (err) {
+		return err;
+	} 
 
-	return err;
+	wl_update_wowl(ndev);
+	return 0;
 }
 
 s32 wl_cfg80211_down(struct net_device *ndev)
