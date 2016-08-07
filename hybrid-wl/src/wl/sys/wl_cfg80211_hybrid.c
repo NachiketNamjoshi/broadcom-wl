@@ -16,6 +16,8 @@
  * OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
  * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  *
+ * Co-Author: Nachiket.Namjoshi <nachiketnamjoshi@gmail.com>
+ *
  * $Id: wl_cfg80211.c,v 1.1.6.4 2011-02-11 00:22:09 $
  */
 
