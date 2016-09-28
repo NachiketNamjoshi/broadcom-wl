@@ -2,7 +2,7 @@
 # Makefile fragment for Linux 2.6
 # Broadcom 802.11abg Networking Device Driver
 #
-# Copyright (C) 2013, Broadcom Corporation. All Rights Reserved.
+# Copyright (C) 2015, Broadcom Corporation. All Rights Reserved.
 # 
 # Permission to use, copy, modify, and/or distribute this software for any
 # purpose with or without fee is hereby granted, provided that the above
@@ -103,6 +103,23 @@ ifneq ($(KERNELRELEASE),)
 
 endif
 
+#Check GCC version so we can apply -Wno-date-time if supported.  GCC >= 4.9
+empty:=
+space:= $(empty) $(empty)
+GCCVERSIONSTRING := $(shell expr `$(CC) -dumpversion`)
+#Create version number without "."
+GCCVERSION := $(shell expr `echo $(GCCVERSIONSTRING)` | cut -f1 -d.)
+GCCVERSION += $(shell expr `echo $(GCCVERSIONSTRING)` | cut -f2 -d.)
+GCCVERSION += $(shell expr `echo $(GCCVERSIONSTRING)` | cut -f3 -d.)
+# Make sure the version number has at least 3 decimals
+GCCVERSION += 00
+# Remove spaces from the version number
+GCCVERSION := $(subst $(space),$(empty),$(GCCVERSION))
+# Crop the version number to 3 decimals.
+GCCVERSION := $(shell expr `echo $(GCCVERSION)` | cut -b1-3)
+GE_49 := $(shell expr `echo $(GCCVERSION)` \>= 490)
+
+
 EXTRA_CFLAGS :=
 
 ifeq ($(APIFINAL),CFG80211)
@@ -126,7 +143,10 @@ reacted_wl-objs            += src/wl/sys/wl_cfg80211_hybrid.o
 EXTRA_CFLAGS       += -I$(src)/src/include -I$(src)/src/common/include
 EXTRA_CFLAGS       += -I$(src)/src/wl/sys -I$(src)/src/wl/phy -I$(src)/src/wl/ppr/include
 EXTRA_CFLAGS       += -I$(src)/src/shared/bcmwifi/include
-#EXTRA_CFLAGS       += -DBCMDBG_ASSERT
+#EXTRA_CFLAGS       += -DBCMDBG_ASSERT -DBCMDBG_ERR
+ifeq "$(GE_49)" "1"
+EXTRA_CFLAGS       += -Wno-date-time
+endif
 
 EXTRA_LDFLAGS      := $(src)/lib/wlc_hybrid.o_shipped
 
@@ -134,8 +154,16 @@ KBASE              ?= /lib/modules/`uname -r`
 KBUILD_DIR         ?= $(KBASE)/build
 MDEST_DIR          ?= $(KBASE)/extra/reacted_wl/
 OLD_MDEST_DIR          ?= $(KBASE)/extra/wl/
+
+# Cross compile setup.  Tool chain and kernel tree, replace with your own.
+CROSS_TOOLS        = /path/to/tools
+CROSS_KBUILD_DIR   = /path/to/kernel/tree
+
 all:
 	KBUILD_NOPEDANTIC=1 make -C $(KBUILD_DIR) M=`pwd`
+
+cross:
+	KBUILD_NOPEDANTIC=1 make CROSS_COMPILE=${CROSS_TOOLS} -C $(CROSS_KBUILD_DIR) M=`pwd`
 
 clean:
 	KBUILD_NOPEDANTIC=1 make -C $(KBUILD_DIR) M=`pwd` clean
